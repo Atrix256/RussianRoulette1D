@@ -2,3 +2,4 @@
 x64/
 _build/
 *.vcxproj.user
+*.csv
