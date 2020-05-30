@@ -2,10 +2,11 @@
 #include <random>
 #include <vector>
 
-#define DETERMINISTIC() 1
+#define DETERMINISTIC() 0
 
-static const size_t c_Iterative_Tests = 1000;
-static const size_t c_Iterative_Iterations = 100000;
+// TODO: up these counts after things are working
+static const size_t c_Iterative_Tests = 1000000;
+static const size_t c_Iterative_Iterations = 100;
 
 static const size_t c_Flat_Tests = 100000;
 
@@ -33,97 +34,101 @@ float Lerp(float A, float B, float t)
 
 void TestIterative(std::mt19937& rng)
 {
-    std::uniform_real_distribution<float> dist(0.0f, 1.0f);
+    std::uniform_real_distribution<float> dist_Neg1_1(-1.0f, 1.0f);
+    std::uniform_real_distribution<float> dist_0_1(0.0f, 1.0f);
 
     auto func = [] (float x)
     {
-        return sin(x * c_pi);
-        //return sin(100.0f / (x + 0.001f)) * 0.5f + 0.5f;
+        return Clamp(sin(x * c_pi / 2.0f), -1.0f, 1.0f);
     };
 
     float monteCarloYAvg = 0.0f;
-    float monteCarloYAvgSquared = 0.0f;
+    float monteCarloYSquaredAvg = 0.0f;
     float monteCarloStdDev = 0.0f;
 
+    // TODO: clean these up
     float russianRouletteYAvg = 0.0f;
     float russianRouletteYSquaredAvg = 0.0f;
     float russianRouletteStdDev = 0.0f;
-    size_t russianRouletteMinIterations = 1000;
+    size_t russianRouletteMinIterations = c_Iterative_Iterations;
     size_t russianRouletteMaxIterations = 0;
     float russianRouletteAvgIterations = 0.0f;
 
-    // TODO: ditch lerp for averaging!
+    // TODO: ditch lerp for averaging? maybe not. actually no.. go back :P
+    // TODO: could do a sum of a function instead of integrating it, for the inner function. might make more sense. could make it like sin(x) + 0.1f so there was an actual non zero value to reach
 
     for (size_t testIndex = 1; testIndex <= c_Iterative_Tests; ++testIndex)
     {
         // monte carlo
         {
             // take one sample of this recursive integral by doing "a lot" of iterations instead of infinite iterations
-            float Y = dist(rng);
+            float Y = dist_Neg1_1(rng);
             float YAvg = 0.0f;
             for (size_t iterationIndex = 1; iterationIndex <= c_Iterative_Iterations; ++iterationIndex)
             {
-                if (iterationIndex == 4028)
-                {
-                    int ijkl = 0;
-                }
                 Y = func(Y);
-                YAvg += Y / float(c_Iterative_Iterations);
+                YAvg += Y;
+                // TODO: rename YAvg to YSum
             }
 
+            // TODO: make this code look like the MC in the flat test
+
             // integrate the sample
-            monteCarloYAvg += YAvg / float(c_Iterative_Tests);
-            monteCarloYAvgSquared += (YAvg * YAvg) / float(c_Iterative_Tests);
+            monteCarloYAvg = Lerp(monteCarloYAvg, YAvg, 1.0f / float(testIndex));
+            monteCarloYSquaredAvg = Lerp(monteCarloYSquaredAvg, YAvg*YAvg, 1.0f / float(testIndex));
         }
 
         // Russian roulette
         {
             // take one sample of this recursive integral by using Russian roulette instead of infinite iterations
-            float Y = dist(rng);
+            float x = dist_Neg1_1(rng);
             float YAvg = 0.0f;
-            float weightTotal = 1.0f;
 
             float weight = 1.0f;
-
-            // TODO: i'm not convinced this is correct. making p = Y * 2.0 should keep the average value the same but decrease variance. it changes the value though
-
-            size_t iterationIndex = 1;
-            while (1)
+            size_t russianRoulette_Samples = 0;
+            for (size_t iterationIndex = 1; iterationIndex <= c_Iterative_Iterations; ++iterationIndex)
             {
-                Y = func(Y);
-                YAvg += Y * weight;
-
-                float p = Y;
-                if (dist(rng) > p)
+                // probability of killing - kill more towards zero, where the function is smaller, less at the edges where it's larger.
+                float p = 1.0f - abs(x);
+                if (dist_0_1(rng) < p)
                     break;
 
-                weight *= (1.0f - p);
+                // boost the weighting for this and all future iterations, to account for the ones that got killed
+                weight /= (1.0f - p);
 
-                ++iterationIndex;
+                // evaluate the function
+                float y = func(x);
+
+                // take the answer as our next input
+                x = y;
+
+                // keep track of the YAvg
+                YAvg += y * weight;
+
+                russianRoulette_Samples++;
             }
-
-            // TODO: do flattened test, maybe before finishing this and calling it ok
-
-            // TODO: if the iteration count is low, we can change the probability of being killed to be lower. we get more iterations then, so better quality, but still unbiased. I think?
 
             // integrate the sample
             russianRouletteYAvg = Lerp(russianRouletteYAvg, YAvg, 1.0f / float(testIndex));
-            russianRouletteYSquaredAvg = Lerp(russianRouletteYSquaredAvg, YAvg * YAvg, 1.0f / float(testIndex));
+            russianRouletteYSquaredAvg = Lerp(russianRouletteYSquaredAvg, YAvg*YAvg, 1.0f / float(testIndex));
 
-            russianRouletteMinIterations = std::min(russianRouletteMinIterations, iterationIndex);
-            russianRouletteMaxIterations = std::max(russianRouletteMaxIterations, iterationIndex);
-            russianRouletteAvgIterations = Lerp(russianRouletteAvgIterations, float(iterationIndex), 1.0f / float(testIndex));
-
-            // TODO: write out value and variance to file? or maybe store in an array so we can make a better csv?
+            // keep track of min/max/avg samples
+            russianRouletteMinIterations = std::min(russianRouletteMinIterations, russianRoulette_Samples);
+            russianRouletteMaxIterations = std::max(russianRouletteMaxIterations, russianRoulette_Samples);
+            russianRouletteAvgIterations = Lerp(russianRouletteAvgIterations, float(russianRoulette_Samples), 1.0f / float(testIndex));
         }
     }
 
+    // TODO: do same RR test, but make it be 1/10th the probability of killing
+
+    // TODO: use a result structure like the flat test
+
     // calculate standard deviations
-    monteCarloStdDev = sqrt(abs(monteCarloYAvgSquared) - (monteCarloYAvg * monteCarloYAvg));
+    monteCarloStdDev = sqrt(abs(monteCarloYSquaredAvg) - (monteCarloYAvg * monteCarloYAvg));
     russianRouletteStdDev = sqrt(abs(russianRouletteYSquaredAvg) - (russianRouletteYAvg * russianRouletteYAvg));
 
-
     // TODO: print out value and variance of each technique, and loopcounts
+    // TODO: write CSV
     
     printf("Iterative Function (%zu tests):\n", c_Iterative_Tests);
     printf(" Monte Carlo: \n  value = %f\n  stddev = %f\n  iterations = %zu\n", monteCarloYAvg, monteCarloStdDev, c_Iterative_Iterations);
@@ -388,9 +393,9 @@ int main(int argc, char** argv)
     std::mt19937 rng(rd());
 #endif
 
-    //TestIterative(rng);
-
-    TestFlat(rng);
+    // TODO: uncomment before checkin
+    //TestFlat(rng);
+    TestIterative(rng);
 
     return 0;
 }
