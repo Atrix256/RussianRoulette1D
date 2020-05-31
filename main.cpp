@@ -2,11 +2,10 @@
 #include <random>
 #include <vector>
 
-#define DETERMINISTIC() 0
+#define DETERMINISTIC() 1
 
-// TODO: up these counts after things are working
-static const size_t c_Iterative_Tests = 1000000;
-static const size_t c_Iterative_Iterations = 100;
+static const size_t c_Iterative_Tests = 1000;
+static const size_t c_Iterative_Iterations = 1000;
 
 static const size_t c_Flat_Tests = 100000;
 
@@ -34,108 +33,164 @@ float Lerp(float A, float B, float t)
 
 void TestIterative(std::mt19937& rng)
 {
-    std::uniform_real_distribution<float> dist_Neg1_1(-1.0f, 1.0f);
-    std::uniform_real_distribution<float> dist_0_1(0.0f, 1.0f);
+    std::uniform_real_distribution<float> dist(0.0f, 1.0f);
 
+    // y = sin(x*pi/2)
     auto func = [] (float x)
     {
-        return Clamp(sin(x * c_pi / 2.0f), -1.0f, 1.0f);
+        return sin(x * c_pi / 2.0f);
     };
 
-    float monteCarloYAvg = 0.0f;
-    float monteCarloYSquaredAvg = 0.0f;
-    float monteCarloStdDev = 0.0f;
+    struct SamplePoint
+    {
+        float value;
+        float stdDev;
+    };
 
-    // TODO: clean these up
-    float russianRouletteYAvg = 0.0f;
-    float russianRouletteYSquaredAvg = 0.0f;
-    float russianRouletteStdDev = 0.0f;
-    size_t russianRouletteMinIterations = c_Iterative_Iterations;
-    size_t russianRouletteMaxIterations = 0;
-    float russianRouletteAvgIterations = 0.0f;
+    struct Result
+    {
+        SamplePoint monteCarlo;
+        SamplePoint russianRoulette1;
+        SamplePoint russianRoulette2;
+    };
 
-    // TODO: ditch lerp for averaging? maybe not. actually no.. go back :P
-    // TODO: could do a sum of a function instead of integrating it, for the inner function. might make more sense. could make it like sin(x) + 0.1f so there was an actual non zero value to reach
+    std::vector<Result> results(c_Iterative_Tests);
+
+    float monteCarlo_YAvg = 0.0f;
+    float monteCarlo_YSquaredAvg = 0.0f;
+
+    float russianRoulette1_YAvg = 0.0f;
+    float russianRoulette1_YSquaredAvg = 0.0f;
+    size_t russianRoulette1_MinIterations = c_Iterative_Iterations;
+    size_t russianRoulette1_MaxIterations = 0;
+    float russianRoulette1_AvgIterations = 0.0f;
+
+    float russianRoulette2_YAvg = 0.0f;
+    float russianRoulette2_YSquaredAvg = 0.0f;
+    size_t russianRoulette2_MinIterations = c_Iterative_Iterations;
+    size_t russianRoulette2_MaxIterations = 0;
+    float russianRoulette2_AvgIterations = 0.0f;
 
     for (size_t testIndex = 1; testIndex <= c_Iterative_Tests; ++testIndex)
     {
         // monte carlo
         {
-            // take one sample of this recursive integral by doing "a lot" of iterations instead of infinite iterations
-            float Y = dist_Neg1_1(rng);
-            float YAvg = 0.0f;
+            // take one sample by doing "a lot" of iterations instead of infinite iterations
+            float x = dist(rng);
+            float y = 0.0f;
             for (size_t iterationIndex = 1; iterationIndex <= c_Iterative_Iterations; ++iterationIndex)
             {
-                Y = func(Y);
-                YAvg += Y;
-                // TODO: rename YAvg to YSum
+                y += func(x);
+                x /= 2.0f;
             }
 
-            // TODO: make this code look like the MC in the flat test
-
             // integrate the sample
-            monteCarloYAvg = Lerp(monteCarloYAvg, YAvg, 1.0f / float(testIndex));
-            monteCarloYSquaredAvg = Lerp(monteCarloYSquaredAvg, YAvg*YAvg, 1.0f / float(testIndex));
+            monteCarlo_YAvg = Lerp(monteCarlo_YAvg, y, 1.0f / float(testIndex));
+            monteCarlo_YSquaredAvg = Lerp(monteCarlo_YSquaredAvg, y*y, 1.0f / float(testIndex));
+
+            // save this data for the CSV
+            results[testIndex - 1].monteCarlo.value = monteCarlo_YAvg;
+            results[testIndex - 1].monteCarlo.stdDev = sqrt(abs(monteCarlo_YSquaredAvg) - (monteCarlo_YAvg*monteCarlo_YAvg));
         }
 
-        // Russian roulette
+        // Russian roulette: chance to kill is p = 1-x
         {
-            // take one sample of this recursive integral by using Russian roulette instead of infinite iterations
-            float x = dist_Neg1_1(rng);
-            float YAvg = 0.0f;
-
+            // take one by using Russian roulette instead of infinite iterations
+            float x = dist(rng);
+            float y = 0.0f;
             float weight = 1.0f;
-            size_t russianRoulette_Samples = 0;
+            size_t russianRoulette1_Samples = 0;
             for (size_t iterationIndex = 1; iterationIndex <= c_Iterative_Iterations; ++iterationIndex)
             {
-                // probability of killing - kill more towards zero, where the function is smaller, less at the edges where it's larger.
-                float p = 1.0f - abs(x);
-                if (dist_0_1(rng) < p)
+                // probability of killing: kill more as x gets smaller, since the function also gets smaller
+                // boost the weighting for this and all future iterations for survivors, to account for the ones that got killed
+                float p = 1.0f - x;
+                if (dist(rng) < p)
                     break;
-
-                // boost the weighting for this and all future iterations, to account for the ones that got killed
                 weight /= (1.0f - p);
 
-                // evaluate the function
-                float y = func(x);
+                // evaluate the function and move to the next iteration
+                y += func(x) * weight;
+                x /= 2.0f;
 
-                // take the answer as our next input
-                x = y;
-
-                // keep track of the YAvg
-                YAvg += y * weight;
-
-                russianRoulette_Samples++;
+                russianRoulette1_Samples++;
             }
 
             // integrate the sample
-            russianRouletteYAvg = Lerp(russianRouletteYAvg, YAvg, 1.0f / float(testIndex));
-            russianRouletteYSquaredAvg = Lerp(russianRouletteYSquaredAvg, YAvg*YAvg, 1.0f / float(testIndex));
+            russianRoulette1_YAvg = Lerp(russianRoulette1_YAvg, y, 1.0f / float(testIndex));
+            russianRoulette1_YSquaredAvg = Lerp(russianRoulette1_YSquaredAvg, y*y, 1.0f / float(testIndex));
+
+            // save this data for the CSV
+            results[testIndex - 1].russianRoulette1.value = russianRoulette1_YAvg;
+            results[testIndex - 1].russianRoulette1.stdDev = sqrt(abs(russianRoulette1_YSquaredAvg) - (russianRoulette1_YAvg*russianRoulette1_YAvg));
 
             // keep track of min/max/avg samples
-            russianRouletteMinIterations = std::min(russianRouletteMinIterations, russianRoulette_Samples);
-            russianRouletteMaxIterations = std::max(russianRouletteMaxIterations, russianRoulette_Samples);
-            russianRouletteAvgIterations = Lerp(russianRouletteAvgIterations, float(russianRoulette_Samples), 1.0f / float(testIndex));
+            russianRoulette1_MinIterations = std::min(russianRoulette1_MinIterations, russianRoulette1_Samples);
+            russianRoulette1_MaxIterations = std::max(russianRoulette1_MaxIterations, russianRoulette1_Samples);
+            russianRoulette1_AvgIterations = Lerp(russianRoulette1_AvgIterations, float(russianRoulette1_Samples), 1.0f / float(testIndex));
+        }
+
+        // Russian roulette: chance to kill is p = (1-x)/5
+        {
+            // take one by using Russian roulette instead of infinite iterations
+            float x = dist(rng);
+            float y = 0.0f;
+            float weight = 1.0f;
+            size_t russianRoulette2_Samples = 0;
+            for (size_t iterationIndex = 1; iterationIndex <= c_Iterative_Iterations; ++iterationIndex)
+            {
+                // probability of killing: kill more as x gets smaller, since the function also gets smaller
+                // reduce the probability a bit though, to get more iterations
+                // boost the weighting for this and all future iterations for survivors, to account for the ones that got killed
+                float p = (1.0f - x) / 5.0f;
+                if (dist(rng) < p)
+                    break;
+                weight /= (1.0f - p);
+
+                // evaluate the function and move to the next iteration
+                y += func(x) * weight;
+                x /= 2.0f;
+
+                russianRoulette2_Samples++;
+            }
+
+            // integrate the sample
+            russianRoulette2_YAvg = Lerp(russianRoulette2_YAvg, y, 1.0f / float(testIndex));
+            russianRoulette2_YSquaredAvg = Lerp(russianRoulette2_YSquaredAvg, y*y, 1.0f / float(testIndex));
+
+            // save this data for the CSV
+            results[testIndex - 1].russianRoulette2.value = russianRoulette2_YAvg;
+            results[testIndex - 1].russianRoulette2.stdDev = sqrt(abs(russianRoulette2_YSquaredAvg) - (russianRoulette2_YAvg*russianRoulette2_YAvg));
+
+            // keep track of min/max/avg samples
+            russianRoulette2_MinIterations = std::min(russianRoulette2_MinIterations, russianRoulette2_Samples);
+            russianRoulette2_MaxIterations = std::max(russianRoulette2_MaxIterations, russianRoulette2_Samples);
+            russianRoulette2_AvgIterations = Lerp(russianRoulette2_AvgIterations, float(russianRoulette2_Samples), 1.0f / float(testIndex));
         }
     }
 
-    // TODO: do same RR test, but make it be 1/10th the probability of killing
-
-    // TODO: use a result structure like the flat test
-
-    // calculate standard deviations
-    monteCarloStdDev = sqrt(abs(monteCarloYSquaredAvg) - (monteCarloYAvg * monteCarloYAvg));
-    russianRouletteStdDev = sqrt(abs(russianRouletteYSquaredAvg) - (russianRouletteYAvg * russianRouletteYAvg));
-
-    // TODO: print out value and variance of each technique, and loopcounts
-    // TODO: write CSV
-    
     printf("Iterative Function (%zu tests):\n", c_Iterative_Tests);
-    printf(" Monte Carlo: \n  value = %f\n  stddev = %f\n  iterations = %zu\n", monteCarloYAvg, monteCarloStdDev, c_Iterative_Iterations);
-    printf(" Russian Roulette: \n  value = %f\n  stddev = %f\n  iterations min = %zu, max = %zu, avg = %0.2f\n\n\n", russianRouletteYAvg, russianRouletteStdDev, russianRouletteMinIterations, russianRouletteMaxIterations, russianRouletteAvgIterations);
+    printf(" Monte Carlo: \n  value = %f\n  stddev = %f\n  iterations = %zu\n", results.rbegin()->monteCarlo.value, results.rbegin()->monteCarlo.stdDev, c_Iterative_Iterations);
+    printf(" Russian Roulette: p = (1-x) \n  value = %f\n  stddev = %f\n  iterations min = %zu, max = %zu, avg = %0.2f\n", results.rbegin()->russianRoulette1.value, results.rbegin()->russianRoulette1.stdDev, russianRoulette1_MinIterations, russianRoulette1_MaxIterations, russianRoulette1_AvgIterations);
+    printf(" Russian Roulette: p = (1-x)/5 \n  value = %f\n  stddev = %f\n  iterations min = %zu, max = %zu, avg = %0.2f\n\n\n", results.rbegin()->russianRoulette2.value, results.rbegin()->russianRoulette2.stdDev, russianRoulette2_MinIterations, russianRoulette2_MaxIterations, russianRoulette2_AvgIterations);
 
     FILE* file;
     fopen_s(&file, "iterative.csv", "w+t");
+    fprintf(file, "\"Sample\"");
+    fprintf(file, ",\"Monte Carlo Value\",\"Monte Carlo StdDev\"");
+    fprintf(file, ",\"RR (1-x) Value\",\"RR (1-x) StdDev\"");
+    fprintf(file, ",\"RR (1-x)/5 Value\",\"RR (1-x)/5 StdDev\"");
+    fprintf(file, "\n");
+    size_t index = 1;
+    for (const Result& result : results)
+    {
+        fprintf(file, "\"%zu\"", index);
+        fprintf(file, ",\"%f\",\"%f\"", result.monteCarlo.value, result.monteCarlo.stdDev);
+        fprintf(file, ",\"%f\",\"%f\"", result.russianRoulette1.value, result.russianRoulette1.stdDev);
+        fprintf(file, ",\"%f\",\"%f\"", result.russianRoulette2.value, result.russianRoulette2.stdDev);
+        fprintf(file, "\n");
+        index++;
+    }
     fclose(file);
 }
 
@@ -337,7 +392,7 @@ void TestFlat(std::mt19937& rng)
     printf(" Rejection Sampling y=2(1-x): \n  value = %f\n  stddev = %f\n  attempts = %zu (%i%%)\n", results.rbegin()->rejectionSampling2.value, results.rbegin()->rejectionSampling2.stdDev, rejectionSampling2_Attempts, int(float(rejectionSampling2_Attempts) * 100.0f / float(c_Flat_Tests)));
     printf(" Rejection Sampling y=3(1-x)^2: \n  value = %f\n  stddev = %f\n  attempts = %zu (%i%%)\n", results.rbegin()->rejectionSampling3.value, results.rbegin()->rejectionSampling3.stdDev, rejectionSampling3_Attempts, int(float(rejectionSampling3_Attempts) * 100.0f / float(c_Flat_Tests)));
     printf(" Russian Roulette p=0.25: \n  value = %f\n  stddev = %f\n  samples = %zu (%i%%)\n", results.rbegin()->russianRoulette1.value, results.rbegin()->russianRoulette1.stdDev, russianRoulette1_Samples, int(float(russianRoulette1_Samples) * 100.0f / float(c_Flat_Tests)));
-    printf(" Russian Roulette p=1-x: \n  value = %f\n  stddev = %f\n  samples = %zu (%i%%)\n", results.rbegin()->russianRoulette2.value, results.rbegin()->russianRoulette2.stdDev, russianRoulette2_Samples, int(float(russianRoulette2_Samples) * 100.0f / float(c_Flat_Tests)));
+    printf(" Russian Roulette p=1-x: \n  value = %f\n  stddev = %f\n  samples = %zu (%i%%)\n\n\n", results.rbegin()->russianRoulette2.value, results.rbegin()->russianRoulette2.stdDev, russianRoulette2_Samples, int(float(russianRoulette2_Samples) * 100.0f / float(c_Flat_Tests)));
 
     // write results to csv
     {
@@ -393,8 +448,7 @@ int main(int argc, char** argv)
     std::mt19937 rng(rd());
 #endif
 
-    // TODO: uncomment before checkin
-    //TestFlat(rng);
+    TestFlat(rng);
     TestIterative(rng);
 
     return 0;
@@ -402,20 +456,12 @@ int main(int argc, char** argv)
 
 /*
 
-TODO:
-
-* maybe the iterative function is too chaotic. could try something simpler & smoother.
-
-! need to boost values of survivors
-
-- chaotic iterative function. y=sin(1/x)
- * "many iterations" vs "russian roulette" of y value?
-
-
 
 
 
  Blog Notes:
+
+ Note how in the iterative case, it really doesn't need 1000 iterations to get good results. russian roulette finds that "automatically"
 
  "The connection between russian roulette and rejection sampling / importance sampling"
 
