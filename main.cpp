@@ -453,39 +453,3 @@ int main(int argc, char** argv)
 
     return 0;
 }
-
-/*
-
-
-
-
- Blog Notes:
-
- Note how in the iterative case, it really doesn't need 1000 iterations to get good results. russian roulette finds that "automatically"
-
- "The connection between russian roulette and rejection sampling / importance sampling"
-
- Maybe start the explanation with the non recursive function.
- * If you do 4 samples of the function y=1, and reject 25% of the time, you get an average of 3/4 instead of 1.
- * You need to divide value by (1-0.25) aka 0.75 or 3/4.  Aka you need to multiply by 4/3.
- * 4/3 times the 3 samples that survived is 12/3 or 4.
- * Averaging as if there are 4 samples. You divide 4 by 4 and get 1.
- * The 3 samples each made themselves count for a little bit more, to make up for the lost sample.
-
-
- ? mention how you can directly draw from the PDF without importance sampling: https://blog.demofox.org/2017/08/05/generating-random-numbers-from-a-specific-distribution-by-inverting-the-cdf/
-* link to 1d monte carlo basics: https://blog.demofox.org/2018/06/12/monte-carlo-integration-explanation-in-1d/
- * link to this: http://www.pbr-book.org/3ed-2018/Monte_Carlo_Integration/Russian_Roulette_and_Splitting.html
- * link to this for chaotic function: https://computing.dcu.ie/~humphrys/Notes/Neural/chaos.html
-
-  ? should i link to this for how lerp is calculating an averag? https://blog.demofox.org/2020/03/10/how-do-i-calculate-variance-in-1-pass/
-
-
- * summarize the PBRT post.
-  * russian roulette CAN reduce variance but it might not
-
- * russian roulette takes a lot fewer steps, that could make it better ultimately if steps were really costly to do.
-
- * can even do a fixed percentage for russian roulette- but why? i did it to show it
-
- */
